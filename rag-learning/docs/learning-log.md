@@ -213,6 +213,33 @@ full_texts = [f"{doc['title']} {doc['content']}" for doc in documents]
 
 **关键收获**：数据加载和 RAG 逻辑解耦后，切换数据源只需换 loader，Pipeline 不感知。这是生产级 RAG 的第一个扩展点——从 `load_documents_from_dir()` 进化到 `DocumentLoader → Chunker → VectorStore`。
 
+---
+
+### 练习6：BM25 混合检索
+
+> 详见 [exercises/exercise-06.md](../exercises/exercise-06.md)
+
+实现 `BM25Retriever` + `rrf_fusion()`，创建三种策略对比 Demo。
+
+| 策略 | 场景1（语义"办公地点"） | 场景2（精确"Claude code"） |
+|------|----------------------|--------------------------|
+| TF-IDF向量 | 4条，精准 | 仅2条，召回不足 |
+| BM25关键词 | 5条，更广 | 5条，扩散匹配 |
+| 混合(RRF) | 综合两者排名 | 综合两者排名 |
+
+**核心理解**：BM25 是 TF-IDF 的工业升级版（词频饱和+长度归一化），混合检索用 RRF 融合排名而非原始分数（因为两套分数不可直接比较）。
+
+### 基础+进阶练习完成小结
+
+| 练习 | 核心教训 |
+|------|---------|
+| 1. 扩展知识库 | 检索字段设计（title vs content） |
+| 2. 调 top_k | 跨文档问题才体现 top_k 价值 |
+| 3. 换相似度 | 算法方向必须和排序逻辑一致 |
+| 4. 加对话历史 | history 要贯穿 pipeline 全链路 |
+| 5. 文件加载 | 数据与逻辑解耦 |
+| 6. BM25 混合检索 | 排名融合而非分数融合 |
+
 ### 下一步
 
-进阶练习 6（BM25 混合检索）或继续 MCP 学习
+继续 MCP 学习
