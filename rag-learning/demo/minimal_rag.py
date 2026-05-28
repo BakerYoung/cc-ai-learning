@@ -89,6 +89,20 @@ DOCUMENTS = [
                    "过拟合指模型在训练集表现好、测试集表现差。"
                    "交叉验证是评估模型泛化能力的常用方法。",
     },
+    {
+        "title": "vibe coding工具",
+        "content": "现在使用最强大的是Claude code"
+                   "公认最好用的codex"
+                   "以及opencode",
+    },
+    {
+        "title": "AI中的养龙虾",
+        "content": "养龙虾通常说的是openclaw",
+    },
+    {
+        "title": "目前大数据实时处理技术使用的工具",
+        "content": "多用flink,spark也有不少企业在使用",
+    }
 ]
 
 
@@ -118,19 +132,20 @@ class SimpleRetriever:
         self.contents = [doc["content"] for doc in documents] # 提取所有文档正文
         self.titles = [doc["title"] for doc in documents]     # 提取所有文档标题
 
+        # 标题 + 正文 一起索引，标题往往包含最重要的关键词
+        # 例："vibe coding工具" 在标题里，但正文没提 → 不加标题就检索不到
+        full_texts = [f"{doc['title']} {doc['content']}" for doc in documents]
+
         # 关键：中文需要先分词再 TF-IDF
         # jieba 把 "公司成立于2024年" → ["公司", "成立", "于", "2024", "年"]
         # 用空格连起来，TF-IDF 就能按空格正确切词了
-        tokenized = [" ".join(jieba.lcut(c)) for c in self.contents]
+        tokenized = [" ".join(jieba.lcut(t)) for t in full_texts]
 
         # TF-IDF 向量化器：把文本变成数值向量
         # 文本 → 分词 → 计算 TF-IDF 权重 → 得到一个向量 [0.0, 0.5, 0.0, 0.3, ...]
         self.vectorizer = TfidfVectorizer()
         self.doc_vectors = self.vectorizer.fit_transform(tokenized)
-        # self.doc_vectors 是一个稀疏矩阵，shape = (7篇文档, 词汇表大小)
-        # 每一行就是一篇文档的向量表示
-        # self.doc_vectors 是一个稀疏矩阵，shape = (7篇文档, 词汇表大小)
-        # 每一行就是一篇文档的向量表示
+        # self.doc_vectors 是一个稀疏矩阵，shape = (N篇文档, 词汇表大小)
 
     def retrieve(self, query: str, top_k: int = 3) -> list[dict]:
         """
@@ -307,6 +322,9 @@ if __name__ == "__main__":
 
         # 问题5：知识库中的技术内容
         "Python的map函数是做什么的？",
+        "vibe coding工具有哪些？",
+        "AI中常说的养龙虾是什么？",
+        "实时数据处理使用的什么工具？",
     ]
 
     for query in test_queries:
