@@ -23,3 +23,4 @@ chroma_db/
 
 # pip
 pip-wheel-metadata/
+.claude/
