@@ -26,8 +26,7 @@ import jieba
 from dotenv import load_dotenv
 from openai import OpenAI
 from sklearn.feature_extraction.text import TfidfVectorizer
-# from sklearn.metrics.pairwise import cosine_similarity
-from sklearn.metrics.pairwise import euclidean_distances
+from sklearn.metrics.pairwise import cosine_similarity
 
 # ============================================================================
 # 第1步：加载配置
@@ -165,9 +164,8 @@ class SimpleRetriever:
         # cosine_similarity 返回一个矩阵，每个值在 [0, 1] 之间
         # 1.0 = 完全相关，0.0 = 毫不相关
 
-        # similarities = cosine_similarity(query_vector, self.doc_vectors)[0]
-        similarities = euclidean_distances(query_vector, self.doc_vectors)[0]
-        
+        similarities = cosine_similarity(query_vector, self.doc_vectors)[0]
+
         # similarities 是一个数组 [0.12, 0.05, 0.0, 0.08, 0.02, 0.0, 0.0]
         # 每个值代表 query 对应该文档的相似度
 
@@ -191,14 +189,21 @@ class SimpleRetriever:
 # ============================================================================
 # 第4步：构建生成器（Generator）—— 调用 LLM
 # ============================================================================
-def generate_answer(query: str, retrieved_docs: list[dict]) -> str:
+def generate_answer(query: str, retrieved_docs: list[dict], history: list[dict] = None) -> str:
     """
     将检索到的文档拼入 Prompt，让 LLM 基于它们回答。
 
     这是 RAG 最关键的一步：
       - 没有检索文档 → LLM 可能瞎编
       - 有了检索文档 → LLM "有据可查"，减少幻觉
+
+    参数：
+      history: 历史对话，格式 [{"role": "user", "content": "..."},
+                               {"role": "assistant", "content": "..."}, ...]
     """
+
+    if history is None:
+        history = []
 
     # 如果没有检索到相关文档，让 LLM 老实说不知道
     if not retrieved_docs:
@@ -215,31 +220,33 @@ def generate_answer(query: str, retrieved_docs: list[dict]) -> str:
     context = "\n\n".join(context_parts)
 
     # ------ 构造 Prompt ------
-    # System Prompt：设定 AI 的角色和行为规则
     system_prompt = (
         "你是一个基于内部知识库回答问题的助手。\n"
         "规则：\n"
         "1. 优先使用下面提供的文档内容回答\n"
         "2. 如果文档中没有相关信息，请明确说'知识库中暂无相关信息'\n"
         "3. 回答时引用文档编号，如'根据[文档1]...'\n"
-        "4. 保持回答简洁准确"
+        "4. 保持回答简洁准确\n"
+        "5. 如果用户的问题是追问（如'那价格呢'），结合历史对话理解上下文"
     )
 
-    # User Prompt：用户问题 + 检索到的上下文
-    user_prompt = (
+    # 当前轮的用户消息：检索到的文档 + 用户问题
+    current_message = (
         f"## 知识库检索结果\n\n{context}\n\n"
         f"## 用户问题\n\n{query}\n\n"
         f"请基于以上知识库内容回答用户问题。"
     )
 
+    # ------ 组装 messages：system + 历史对话 + 当前问题 ------
+    messages = [{"role": "system", "content": system_prompt}]
+    messages.extend(history)                                  # 历史对话（多轮 user+assistant）
+    messages.append({"role": "user", "content": current_message})  # 当前问题
+
     # ------ 调用 LLM ------
     response = client.chat.completions.create(
         model=MODEL,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0.3,  # 低温度 = 更确定性，减少随机编造
+        messages=messages,
+        temperature=0.3,
         max_tokens=500,
     )
 
@@ -255,15 +262,16 @@ class RAGPipeline:
 
     数据流：
       用户提问 → Retriever.retrieve() → 相关文档列表
-              → generate_answer() → LLM 回答
+              → generate_answer() → LLM 回答（含历史对话）
     """
 
     def __init__(self, documents: list[dict]):
         self.retriever = SimpleRetriever(documents)
+        self.history = []  # 多轮对话历史：[{"role": "user", "content": "..."}, ...]
 
     def ask(self, query: str, top_k: int = 3, verbose: bool = True) -> str:
         """
-        一次完整的 RAG Q&A。
+        一次完整的 RAG Q&A，支持多轮对话。
 
         参数：
           query:  用户问题
@@ -277,12 +285,18 @@ class RAGPipeline:
             print(f"\n{'='*60}")
             print(f"📝 用户问题：{query}")
             print(f"{'='*60}")
+            if self.history:
+                print(f"💬 历史对话：已记住 {len(self.history)//2} 轮")
             print(f"\n🔍 检索结果（共 {len(docs)} 条相关文档）：")
             for i, doc in enumerate(docs, 1):
                 print(f"  [{i}] {doc['title']}  (相关度: {doc['score']})")
 
-        # ---- 生成阶段 ----
-        answer = generate_answer(query, docs)
+        # ---- 生成阶段 —— 传入历史对话 ----
+        answer = generate_answer(query, docs, history=self.history)
+
+        # ---- 更新历史：把本轮问答追加进去 ----
+        self.history.append({"role": "user", "content": query})
+        self.history.append({"role": "assistant", "content": answer})
 
         if verbose:
             print(f"\n🤖 AI 回答：")
@@ -290,6 +304,11 @@ class RAGPipeline:
             print(f"{'='*60}\n")
 
         return answer
+
+    def clear_history(self):
+        """清空对话历史，开始新一轮对话"""
+        self.history = []
+        print("对话历史已清空。")
 
 
 # ============================================================================
@@ -306,33 +325,45 @@ if __name__ == "__main__":
 ║  这是一个简化的 RAG 系统，展示核心原理。                       ║
 ║  检索器：TF-IDF + 余弦相似度（工业级会用 Embedding 模型）       ║
 ║  生成器：DeepSeek/OpenAI LLM                                 ║
-║  知识库：7 篇公司内部文档                                     ║
+║  知识库：10 篇公司内部文档                                     ║
+║  新功能：多轮对话记忆                                         ║
 ╚══════════════════════════════════════════════════════════════╝
     """)
 
-    # 测试问题列表 — 覆盖不同类型的查询
+    # ====== 单轮测试 ======
+    print("\n" + "─" * 60)
+    print("📋 单轮问答测试")
+    print("─" * 60)
+
     test_queries = [
-        # 问题1：知识库中有明确答案
         "公司混合办公的政策是什么？",
-
-        # 问题2：知识库中有部分答案
         "公司融资了多少钱？投资方有哪些？",
-
-        # 问题3：知识库中有相关信息，需要推理
-        "AI Tutor产品支持哪些编程语言？价格是多少？",
-
-        # 问题4：知识库中没有相关信息
-        "公司有哪些竞争对手？",
-
-        # 问题5：知识库中的技术内容
         "Python的map函数是做什么的？",
         "vibe coding工具有哪些？",
-        "AI中常说的养龙虾是什么？",
-        "实时数据处理使用的什么工具？",
     ]
 
     for query in test_queries:
-        rag.ask(query, top_k=5)  # top_k=2：每次检索最相关的2篇文档
+        rag.ask(query, top_k=5)
 
-    print("\n✅ Demo 运行完毕！")
+    # ====== 多轮对话测试 ======
+    print("\n" + "─" * 60)
+    print("💬 多轮对话测试（演示历史记忆）")
+    print("─" * 60)
+
+    # 清空之前的单轮历史，开始一次新的多轮对话
+    rag.clear_history()
+
+    # 第1轮：问一个完整问题
+    q1 = "AI Tutor产品月费多少钱？"
+    rag.ask(q1, top_k=5)
+
+    # 第2轮：追问——这里没有再次提"AI Tutor"，依赖 LLM 从历史中理解
+    q2 = "那年费呢？"
+    rag.ask(q2, top_k=5)
+
+    # 第3轮：再追问——进一步推理
+    q3 = "如果我按年订阅，比按月省多少？"
+    rag.ask(q3, top_k=5)
+
+    print("✅ Demo 运行完毕！")
     print("接下来：阅读 README.md → 理解生产级架构 → 做练习题")
