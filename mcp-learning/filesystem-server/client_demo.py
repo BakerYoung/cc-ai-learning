@@ -98,7 +98,7 @@ async def main():
 
     # 在 client_demo.py 中
     print("─" * 50)
-    print("[场景X] 获取文件信息")
+    print("[场景7] 获取文件信息")
     print("─" * 50)
 
     r = await caller.call_tool("get_file_info", {"path": "my-project/main.py"})
